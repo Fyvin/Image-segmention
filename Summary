@@ -235,7 +235,8 @@ def regionGrow_ZC1(img, seed=(10,20), seed_way='mean',threshold=100, seed_way):
 
 
 # 区域生长2(更快:手写numpy)
-def regionGrow_ZC2(image, seed=(100,200), threshold=50):
+def regionGrow_ZC2(image, seed=(100,200), threshold=50,
+                   use_opencv_builtin=False, newVal=255, Diff=[-10,10], flags=8):
     '''
     :param image: 输入图像
     :param seed: 起始种子点
@@ -245,33 +246,57 @@ def regionGrow_ZC2(image, seed=(100,200), threshold=50):
     h, w = image.shape
     visited = np.zeros((h, w), dtype=np.uint8)
     result = np.zeros((h, w), dtype=np.uint8)
-    # 手写队列（快很多）
-    queue = np.empty((h*w, 2), dtype=np.int32) # h*w个坐标，每个坐标2列[[y, x],[y,x]]
-    head, tail = 0, 0
-    queue[tail] = seed #加入新元素
-    tail += 1 # tail+1
-    visited[seed] = 1 #标记
-    result[seed] = 1 #标记
-    mean = float(image[seed]) #求区域均值用，每加入一个求一次
-    count = 1 #均值数
-    neighbors = [(-1,0),(1,0),(0,-1),(0,1)] #4邻域
-    while head < tail:
-        y, x = queue[head]
-        head += 1 # 取出一个元素跳出
-        for dy, dx in neighbors:
-            ny, nx = y+dy, x+dx
-            if ny < 0 or ny >= h or nx < 0 or nx >= w: #越界跳出
-                continue
-            if visited[ny, nx]: #已访问跳出
-                continue
-            val = image[ny, nx] #当前值
-            if abs(val - mean) < threshold: #是否符合生长条件
-                visited[ny, nx] = 1 #符合-标记
-                result[ny, nx] = 1 #符合-标记
-                queue[tail] = [ny, nx] #加入新元素
-                tail += 1 #tail后移一位
-                mean = (mean * count + val) / (count + 1)  #动态更新均值
-                count += 1
+    label=1
+    if use_opencv_builtin:
+        for y in range(h):
+            for x in range(w):
+                if visited[y, x]:
+                    continue
+                mask = np.zeros((h + 2, w + 2), np.uint8)
+                _, _, mask, _ = cv2.floodFill(...)
+                region = mask[1:-1, 1:-1]
+                result[region == 1] = label
+                visited[region == 1] = 1
+                label += 1
+        return result
+    else:
+        # 手写队列（快很多）
+        queue = np.empty((h*w, 2), dtype=np.int32) # h*w个坐标，每个坐标2列[[y, x],[y,x]]
+
+        label=1
+        neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]  # 8邻域
+        for y in range(h):
+            for x in range(w):
+                if visited[y,x]:
+                    continue
+
+                head, tail = 0, 0
+                queue[tail] = [y,x] #加入新元素
+                tail += 1 # tail+1
+                visited[y,x] = 1 #标记
+                result[y,x] = label #标记
+                mean = float(image[y,x]) #求区域均值用，每加入一个求一次
+                count = 1 #均值数
+                while head < tail:
+                    y, x = queue[head]
+                    head += 1 # 取出一个元素跳出
+                    for dy, dx in neighbors:
+                        ny, nx = y+dy, x+dx
+                        if ny < 0 or ny >= h or nx < 0 or nx >= w: #越界跳出
+                            continue
+                        if visited[ny, nx]: #已访问跳出
+                            continue
+                        val = image[ny, nx] #当前值
+                        # ========= 生长条件 ==========
+                        if abs(val - mean) < threshold:
+                            visited[ny, nx] = 1 #符合-标记
+                            result[ny, nx] = label #符合-标记
+                            queue[tail] = [ny, nx] #加入新元素
+                            tail += 1 #tail后移一位
+                            mean = (mean * count + val) / (count + 1)  #动态更新均值
+                            count += 1
+                label += 1
+
     return result
 
 
