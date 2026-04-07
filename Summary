@@ -1,0 +1,344 @@
+import numpy as np
+import cv2
+import time
+import matplotlib.pyplot as plt
+from skimage.util import view_as_windows
+
+# 计时器
+timer = lambda func: lambda *args, **kwargs: (s:=time.time(), r:=func(*args, **kwargs), print(f"{func.__name__} 耗时: {time.time()-s:.4f}秒"), r)[-1]
+def cv_show(img):
+    cv2.namedWindow("img", cv2.WINDOW_NORMAL)
+    cv2.imshow("img", img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+@timer
+# 微分1
+def diff1(img, kernel_h=None, kernel_v=None):
+    img_float = img.astype(np.float32) if img.dtype != np.float32 else img.copy()
+    if kernel_h is None:
+        kernel_h = np.array([[-1, 0, 0], [0, 1, 0], [0, 0, 0]],dtype=np.float32)
+    if kernel_v is None:
+        kernel_v = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 0]],dtype=np.float32)
+    grad_x = cv2.filter2D(img_float, -1, kernel_v)
+    grad_y = cv2.filter2D(img_float, -1, kernel_h)
+    grad = np.abs(grad_x) + np.abs(grad_y)
+    result = np.clip(grad, 0, 255)
+    max_val = np.max(result)
+    if max_val>0:
+        result = (result / max_val * 255).astype(np.uint8)
+    return result
+
+
+@timer
+# 微分2
+def diff(img, kernel_h=None, kernel_v=None):
+    img_float = img.astype(np.float32) if img.dtype != np.float32 else img.copy()
+    if kernel_h is None:
+        kernel_h = np.array([[0, 0, 0], [-1, 1, 0], [0, 0, 0]], dtype=np.float32)
+    if kernel_v is None:
+        kernel_v = np.array([[0, -1, 0], [0, 1, 0], [0, 0, 0]], dtype=np.float32)
+    grad_h = cv2.filter2D(img_float, -1, kernel_h)
+    grad_v = cv2.filter2D(img_float, -1, kernel_v)
+    result= np.abs(grad_h) + np.abs(grad_v)
+    # 后处理
+    result = np.clip(result, 0, 255)
+    if np.max(result) > 0:
+        result = (result / np.max(result)) * 255
+    return result.astype(np.uint8)
+
+
+# Robert
+@timer
+def robert_ZC(img, kernel_h=None, kernel_v=None):
+    img_float = img.astype(np.float32) if img.dtype != np.float32 else img.copy()
+    if kernel_h is None:
+        kernel_h = np.array([[0, 0, 0], [0, -1, 0], [0, 0, 1]], dtype=np.float32)
+    if kernel_v is None:
+        kernel_v = np.array([[0, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=np.float32)
+    grad_h = cv2.filter2D(img_float, -1, kernel_h)
+    grad_v  = cv2.filter2D(img_float, -1, kernel_v)
+    result = np.abs(grad_h) + np.abs(grad_v)
+    # 后处理
+    result = np.clip(result, 0, 255)
+    if np.max(result) > 0:
+        result = (result / np.max(result)) * 255
+    return result.astype(np.uint8)
+
+
+# Laplacian
+@timer
+def laplacian_ZC(img, kernel_l=None):
+    img_float = img.astype(np.float32) if img.dtype != np.float32 else img.copy()
+    if kernel_l is None:
+        kernel_l = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float32)
+    grad = cv2.filter2D(img_float, -1, kernel_l)
+    result = np.abs(grad)
+    # 后处理
+    result = np.clip(result, 0, 255)
+    if np.max(result) > 0:
+        result = (result / np.max(result)) * 255
+    return result.astype(np.uint8)
+
+
+# Sobel
+@timer
+def sobel_ZC(img, kernel_x=None, kernel_y=None, use_opencv_builtin=True):
+    """
+    Sobel增强（独立函数）
+    :param img: 输入灰度图（uint8/float32）
+    :param kernel_x: 水平梯度核（None则用默认）
+    :param kernel_y: 垂直梯度核（None则用默认）
+    :param use_opencv_builtin: 是否使用OpenCV内置Sobel（更快，优先推荐）
+    :return: 增强后的图像（uint8）
+    """
+    img_float = img.astype(np.float32) if img.dtype != np.float32 else img.copy()
+    if use_opencv_builtin:
+        # OpenCV内置Sobel（工业级最快）
+        grad_x = cv2.Sobel(img_float, cv2.CV_32F, 1, 0, ksize=3)
+        grad_y = cv2.Sobel(img_float, cv2.CV_32F, 0, 1, ksize=3)
+    else:
+        # 自定义Sobel核（默认）
+        if kernel_x is None:
+            kernel_x = np.array([[-1, -4, -1], [0, 0, 0], [1, 4, 1]], dtype=np.float32)  # 垂直梯度（y）
+        if kernel_y is None:
+            kernel_y = np.array([[-1, 0, 1], [-4, 0, 4], [-1, 0, 1]], dtype=np.float32)  # 水平梯度（x）
+        grad_x = cv2.filter2D(img_float, -1, kernel_x)
+        grad_y = cv2.filter2D(img_float, -1, kernel_y)
+    mag = np.hypot(grad_x, grad_y)  # 梯度强度（边缘有多明显） L2-sqrt(x**2 + y**2)
+    angle = np.arctan2(grad_y, grad_x)  # 梯度方向（边缘朝哪个方向）
+    result = np.abs(grad_x) + np.abs(grad_y)
+    # 后处理
+    result = np.clip(result, 0, 255)
+    if np.max(result) > 0:
+        result = (result / np.max(result)) * 255
+    return result.astype(np.uint8), mag, angle
+
+
+# Canny
+@timer
+def canny_ZC(img,sigma=5,high_thresh=0.5,low_thresh=0.1, use_opencv_builtin=True):
+    '''
+    :param img: 输入图像
+    :param sigma: 高斯函数标准差
+    :param high_thresh: 强边阈值
+    :param low_thresh: 弱边阈值
+    :param use_opencv_builtin: 是否用opencv现成sobel算子
+    :return: 处理后图像
+    '''
+    img_float = img.astype(np.float32) if img.dtype != np.float32 else img.copy()
+    if use_opencv_builtin:
+    else:
+        #1.去噪(gau)
+        k_size = int(sigma*6+1) | 1
+        gau = cv2.GaussianBlur(img, (k_size,k_size), sigma)
+        #2.sobel
+        sobel_img, mag, angle = sobel_ZC(gau, kernel_x=None, kernel_y=None, use_opencv_builtin=True)
+        #3.方向量化
+        angle[angle<0] += np.pi #方向为正 0-pi
+        direction = np.zeros_like(angle, dtype = np.uint8)
+        direction[(angle >= 0) & (angle < np.pi/8)] = 0
+        direction[(angle >= np.pi/8) & (angle < 3*np.pi/8)] = 45
+        direction[(angle >= 3*np.pi/8) & (angle < 5*np.pi/8)] = 90
+        direction[(angle >= 5*np.pi/8) & (angle < 7*np.pi/8)] = 135
+        direction[(angle >= 7*np.pi/8)] = 0
+        mag_pad = np.pad(mag, ((1,1),(1,1)), mode="constant")#填充（上下）（左右）边缘各1行
+        # ===== Step 4: 非极大值抑制（NMS）=====
+        h, w = mag.shape
+        nms = np.zeros_like(mag, dtype=np.float32)
+        mag_p = np.pad(mag, ((1, 1), (1, 1)), mode='constant') # padding
+        center = mag_p[1:-1, 1:-1] # 中心
+        # 0°
+        mask = (direction == 0)
+        left = mag_p[1:-1, :-2]
+        right = mag_p[1:-1, 2:]
+        nms[mask & (center >= left) & (center >= right)] = center[mask & (center >= left) & (center >= right)]
+        # 45°
+        mask = (direction == 45)
+        up_right = mag_p[:-2, 2:]
+        down_left = mag_p[2:, :-2]
+        nms[mask & (center >= up_right) & (center >= down_left)] = center[
+            mask & (center >= up_right) & (center >= down_left)]
+        # 90°
+        mask = (direction == 90)
+        up = mag_p[:-2, 1:-1]
+        down = mag_p[2:, 1:-1]
+        nms[mask & (center >= up) & (center >= down)] = center[mask & (center >= up) & (center >= down)]
+        # 135°
+        mask = (direction == 135)
+        up_left = mag_p[:-2, :-2]
+        down_right = mag_p[2:, 2:]
+        nms[mask & (center >= up_left) & (center >= down_right)] = center[
+            mask & (center >= up_left) & (center >= down_right)]
+        # ===== Step 5: 双阈值 =====
+        high = nms.max() * high_thresh
+        low = high * low_thresh
+        strong = (nms >= high)
+        weak = (nms >= low) & (nms < high)
+        result = np.zeros_like(nms, dtype=np.uint8)
+        result[strong] = 255 #保留强边
+        # ===== Step 6: Hysteresis（非递归，快）=====
+        stack = list(zip(*np.nonzero(strong)))
+        while stack:
+            y, x = stack.pop()
+            for dy in [-1, 0, 1]:
+                for dx in [-1, 0, 1]:
+                    if dy == 0 and dx == 0:
+                        continue
+                    ny, nx = y + dy, x + dx
+                    if (0 <= ny < h) and (0 <= nx < w):
+                        if weak[ny, nx] and result[ny, nx] == 0: #强边缘有邻居是weak但没标记过，变成255
+                            result[ny, nx] = 255
+                            stack.append((ny, nx))
+    return result
+
+
+# 区域生长1(用队列deque稍慢)
+def regionGrow_ZC1(img, seed=(10,20), seed_way='mean',threshold=100, seed_way):
+    '''
+    :param img: 输入图像
+    :param seed: 起始种子点
+    :param seed_way: 哪种判断方式
+    :param threshold: 生长灰度条件阈值
+    :return: 处理后图像
+    '''
+
+    if img.ndim == 2:
+        h,w = img.shape
+        image_mean = img.mean()
+        region = np.zeros_like(img,dtype=np.float32)
+        # 1.定种子开始生长
+        region[seed]=255
+
+        from collections import deque
+        queue = deque([seed]) # deque双向链表，比queue快10倍
+        while queue:
+            y, x = queue.popleft() #取出后删除
+            for dy, dx in ([0,1],[0,-1],[1,0],[-1,0]):
+                ny, nx = y+dy, x+dx
+                if 0<=ny<h and 0<=ny<w:
+                    if region[ny, nx] != 0:
+                        continue
+                    if seed_way=='mean': # 区域均值
+                        diff = abs(img[ny,nx] - image_mean)
+                    if seed_way == 'static': # 固定点值
+                        diff = abs(img[ny, nx] - img[seed])
+                    if seed_way == 'dynamic': # 动态点值
+                        diff = abs(img[ny, nx] - img[y,x])
+                    # 2. 定生长规则
+                    if diff < threshold:
+                        region[ny,nx]=255 #符合条件标记
+                        queue.append((ny, nx)) #添加进行新一轮生长
+        return region
+    else:
+        return None
+
+
+# 区域生长2(更快:手写numpy)
+def regionGrow_ZC2(image, seed=(100,200), threshold=50):
+    '''
+    :param image: 输入图像
+    :param seed: 起始种子点
+    :param threshold: 生长灰度条件阈值
+    :return: 处理后图像
+    '''
+    h, w = image.shape
+    visited = np.zeros((h, w), dtype=np.uint8)
+    result = np.zeros((h, w), dtype=np.uint8)
+    # 手写队列（快很多）
+    queue = np.empty((h*w, 2), dtype=np.int32) # h*w个坐标，每个坐标2列[[y, x],[y,x]]
+    head, tail = 0, 0
+    queue[tail] = seed #加入新元素
+    tail += 1 # tail+1
+    visited[seed] = 1 #标记
+    result[seed] = 1 #标记
+    mean = float(image[seed]) #求区域均值用，每加入一个求一次
+    count = 1 #均值数
+    neighbors = [(-1,0),(1,0),(0,-1),(0,1)] #4邻域
+    while head < tail:
+        y, x = queue[head]
+        head += 1 # 取出一个元素跳出
+        for dy, dx in neighbors:
+            ny, nx = y+dy, x+dx
+            if ny < 0 or ny >= h or nx < 0 or nx >= w: #越界跳出
+                continue
+            if visited[ny, nx]: #已访问跳出
+                continue
+            val = image[ny, nx] #当前值
+            if abs(val - mean) < threshold: #是否符合生长条件
+                visited[ny, nx] = 1 #符合-标记
+                result[ny, nx] = 1 #符合-标记
+                queue[tail] = [ny, nx] #加入新元素
+                tail += 1 #tail后移一位
+                mean = (mean * count + val) / (count + 1)  #动态更新均值
+                count += 1
+    return result
+
+
+#分水岭
+def watershed_ZC(img, markers):
+    '''
+    :param img: 输入图像
+    :param markers: 已标记图中物体类别(中心点标记)
+    :return: labels(分区域类别标记)
+    '''
+    # buckets:存储0-255对yx
+    # labels:复制markers，判断是否为0
+    # neighbor_labels：存储labels为0的4邻域类别
+    h, w = img.shape
+    image = img.astype(np.uint8)
+    # bucket queue
+    buckets = [[] for _ in range(256)] #256个空盒子，存储0-255灰度值
+    # 初始化
+    for y in range(h):
+        for x in range(w):
+            buckets[image[y,x]].append((y,x)) #按0-255归类xy
+    labels = markers.copy()
+    neighbors = [(-1,0),(1,0),(0,-1),(0,1)]
+    for level in range(256): #从0-255遍历检索
+        for y, x in buckets[level]:
+            if labels[y, x] != 0: #非0不判断
+                continue
+            #  neighbor_labels(4邻域检索标签，有则添加标签类型），每点清空
+            neighbor_labels = set()
+            for dy, dx in neighbors:
+                ny, nx = y+dy, x+dx
+                if 0 <= ny < h and 0 <= nx < w:
+                    if labels[ny, nx] > 0: #如四邻阈有类别
+                        neighbor_labels.add(labels[ny, nx]) # 储存所属类别
+            # 更新单点标签labels[y, x] -- 是否为分界线
+            if len(neighbor_labels) == 1: # 邻域只有1种类别
+                labels[y, x] = neighbor_labels.pop() # 把labels 0对应yx归类 - neighbor_labels清零复用
+            elif len(neighbor_labels) > 1: # 邻域有2种以上类别，为分界线
+                labels[y, x] = -1  # 为分界线
+    return labels
+
+
+
+if __name__ == "__main__":
+    # img_path = r"C:\Users\zngxushiy\Desktop\UntitledImage1Z4.bmp"
+    import tifffile
+    img_path = r"D:\xm\xr测试项\Blemish\3-瑕疵Blemish D(严重)-1PCS\373KSK1S1N006Y_WD65_W2_solid_contrast-255_fill-0_W_right_ND1_XYZFilter_8X8_Exp4943.945500_2122.005750_2333.096250#20260309171052_Y.tif"
+    save_path = r"D:\xm\xr测试项\Blemish\3-瑕疵Blemish D(严重)-1PCS"
+    img = tifffile.imread(img_path)
+    # img = cv2.imread(img_path, 0)
+    #一阶差分
+    pre_img1_1 = diff(img, kernel_h=None, kernel_v=None)
+    pre_img1_2 = diff1(img, kernel_h=None, kernel_v=None)
+    #Roberts
+    pre_img2 = robert_ZC(img, kernel_h=None, kernel_v=None)
+    #sobel
+    pre_img3 = sobel_ZC(img, kernel_x=None, kernel_y=None, use_opencv_builtin=False)
+    # Laplacian
+    pre_img4 = laplacian_ZC(img, kernel_l=None)
+    # cv2.imwrite(f"{save_path}/fzc.bmp", pre_img3)
+    # Canny
+    pre_img5 = canny_ZC(img, sigma=3, high_thresh=0.3, low_thresh=0.1)
+    cv_show(pre_img5)
+    #pltz
+    # plt.figure(figsize=(20,10))
+    # plt.subplot(131), plt.imshow(pre_img1, cmap='gray'), plt.title('Diff') #1行3列1图
+    # plt.subplot(132), plt.imshow(pre_img2, cmap='gray'), plt.title('Roberts') #1行3列2图
+    # plt.subplot(133), plt.imshow(pre_img3, cmap='gray'), plt.title('Sobel') #1行3列2图
+    # plt.show()
+
