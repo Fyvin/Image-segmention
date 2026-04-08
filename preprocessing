@@ -1,0 +1,96 @@
+import cv2
+import numpy as np
+import skimage
+
+# 1.计算图对比度
+def dbd(img):
+    #标准差: <10低 20-40正常 >40高
+    std = img.std()
+    #工业 =1最佳
+    Imax = img.max()
+    Imin = img.min()
+    contrast = (Imax - Imin) / (Imax + Imin)
+    #熵：< 3.0：很差 > 5.0：好
+    entropy = skimage.measure.shannon_entropy(img)
+    return std, contrast, entropy
+#Linear
+# a:对比度
+# b:亮度
+def linear_transform(image, a=1.0, b=0):
+    result = np.clip(a * image + b, 0, 255).astype(np.uint8)
+    return result
+
+#gamma
+# >1 变暗 亮区变暗， 暗区变小
+# <1 变亮 暗区变亮， 亮区变小
+def gamma_transform(image, gamma=1.0, c=1.0):
+    inv_gamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in range(256)]).astype("uint8")
+    return cv2.LUT(image, table)
+
+
+#自适应分块均衡化 createCLAHE
+def enhance_image(img,c=2.0,grid=(8,8)):
+    # CLAHE 增强（工业最强参数）
+    clahe = cv2.createCLAHE(clipLimit=c, tileGridSize=grid)
+    result = clahe.apply(img)
+    return result
+
+#图像缩放
+#双线性插值：放大
+def bilinear_interpolation(image, x, y):
+    x1, y1 = int(x), int(y)
+    x2, y2 = x1 + 1, y1 + 1
+    dx = x - x1
+    dy = y - y1
+    value = (1 - dx) * (1 - dy) * image[y1, x1] + dx * (1 - dy) * image[y1, x2] + \
+            (1 - dx) * dy * image[y2, x1] + dx * dy * image[y2, x2]
+    return int(value)
+
+#最近邻插值：放大
+def nearest_neighbor_interp(img, x, y):
+    """
+    手写最近邻插值，最快、无浮点运算
+    """
+    h, w = img.shape[:2]
+    # 四舍五入取最近整数坐标
+    ix = round(x)
+    iy = round(y)
+    # 边界保护
+    ix = max(0, min(ix, w - 1))
+    iy = max(0, min(iy, h - 1))
+    return img[iy, ix]
+
+#INTER_AREA:缩小
+
+#图像矫正
+# mark点相对位置固定
+# mark点越远越好
+# mark点不共享(3点以上)
+def Affine_ZC(img, src, dst):
+    h,w = img.shape[:2]
+    M = cv2.getAffineTransform(src, dst)
+    Affine_img = cv2.warpAffine(
+        img, M, (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE
+    )
+    return Affine_img
+#src_pts_std = np.array([
+#    [x1, y1],  # 左上
+#    [x2, y2],  # 右上
+#    [x3, y3],  # 右下
+#    [x4, y4],  # 左下
+#], dtype=np.float32)
+if __name__ == '__main__':
+    # 读取图像
+    img = cv2.imread('input.jpg', 0)  # 灰度图像
+
+    # 应用线性变换
+    enhanced_img = linear_transform(img, a=1.5, b=30)
+
+    # 显示结果
+    cv2.imshow("Original", img)
+    cv2.imshow("Enhanced", enhanced_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
