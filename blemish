@@ -1,0 +1,67 @@
+import cv2
+import numpy as np
+
+# =============================================================================
+# 论文核心：四方向中值滤波 + 自适应带偏阈值 blemish 检测
+# 速度最大化：全部使用 OpenCV 内置函数 + 无 Python 循环
+# =============================================================================
+def detect_blemish(img, scale=0.5, kernel_size=3, d=1):
+    # ===================== 步骤1：图像降采样（缩小）=====================
+    h, w = img.shape[:2]
+    scaled = cv2.resize(img, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
+
+    # ===================== 步骤2：四方向中值滤波 =====================
+    # 方向1：水平 0°
+    left = cv2.medianBlur(scaled[      d:      , :], kernel_size)
+    right = cv2.medianBlur(scaled[:-d, :], kernel_size)
+    h_pad = (scaled.shape[0] - left.shape[0]) // 2
+    A1 = (left + right) / 2.0
+
+    # 方向2：垂直 90°
+    top = cv2.medianBlur(scaled[:, d:], kernel_size)
+    bottom = cv2.medianBlur(scaled[:, :-d], kernel_size)
+    w_pad = (scaled.shape[1] - top.shape[1]) // 2
+    A3 = (top + bottom) / 2.0
+
+    # 方向3：45° 对角线
+    A2 = (cv2.medianBlur(scaled[d:, d:], 3) + cv2.medianBlur(scaled[:-d, :-d], 3)) / 2.0
+
+    # 方向4：135° 反对角线
+    A4 = (cv2.medianBlur(scaled[d:, :-d], 3) + cv2.medianBlur(scaled[:-d, d:], 3)) / 2.0
+
+    # ===================== 步骤3：四方向结果融合 =====================
+    fused = (A1 + A2 + A3 + A4) / 4.0
+
+    # ===================== 步骤4：计算差值图 =====================
+    diff = fused - scaled[h_pad:-h_pad, w_pad:-w_pad]
+    diff = np.clip(diff, 0, 255)
+
+    # ===================== 步骤5：论文自适应阈值 T = 8.82*S - 3.27 =====================
+    mean_diff = diff.mean()
+    std_diff = diff.std()
+    T = 8.82 * std_diff - 3.27
+
+    # ===================== 步骤6：二值化 =====================
+    _, mask = cv2.threshold(diff.astype(np.uint8), T, 255, cv2.THRESH_BINARY)
+
+    # ===================== 步骤7：还原到原图尺寸 =====================
+    mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+
+    return mask, diff
+
+
+# ------------------- 测试 -------------------
+if __name__ == "__main__":
+    # 读取灰度图
+    img = cv2.imread("test.png", 0)
+
+    # 检测 blemish
+    blemish_mask, diff_img = detect_blemish(img)
+
+    # 显示
+    cv2.imshow("original", img)
+    cv2.imshow("diff", diff_img.astype(np.uint8))
+    cv2.imshow("blemish_mask", blemish_mask)
+
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
